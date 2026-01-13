@@ -49,7 +49,7 @@ export function renderShell(app: HTMLDivElement): void {
           <button id="exportBtn" class="secondary">Export Queue</button>
           <button id="importBrowseBtn" class="ghost" type="button">Import List</button>
           <details id="extraActions" class="actions-collapse">
-            <summary>More Actions</summary>
+            <summary class="ghost">More Actions</summary>
             <div class="actions-group">
               <button id="sampleBtn" class="ghost">Sample XLSX</button>
               <button id="clearCompleteBtn" class="ghost">Delete Complete</button>
@@ -224,12 +224,23 @@ export function syncPreviewPlayer(autoplay: boolean): void {
 
 export function syncActionsCollapse(): void {
   const extraActions = document.querySelector<HTMLDetailsElement>("#extraActions");
-  if (!extraActions) {
+  const actions = document.querySelector<HTMLDivElement>(".actions");
+  const actionsGroup = extraActions?.querySelector<HTMLDivElement>(".actions-group") ?? null;
+  const exportBtn = document.querySelector<HTMLButtonElement>("#exportBtn");
+  const downloadBtn = document.querySelector<HTMLButtonElement>("#downloadBtn");
+  if (!extraActions || !actions || !actionsGroup || !exportBtn || !downloadBtn) {
     return;
   }
-  if (window.matchMedia("(max-width: 980px)").matches) {
+  const shouldCollapse = window.matchMedia("(max-width: 980px)").matches;
+  if (shouldCollapse) {
     extraActions.removeAttribute("open");
+    if (exportBtn.parentElement !== actionsGroup) {
+      actionsGroup.insertBefore(exportBtn, actionsGroup.firstChild);
+    }
   } else {
     extraActions.setAttribute("open", "true");
+    if (exportBtn.parentElement !== actions) {
+      actions.insertBefore(exportBtn, downloadBtn.nextSibling);
+    }
   }
 }

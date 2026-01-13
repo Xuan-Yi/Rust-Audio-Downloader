@@ -197,7 +197,7 @@ body {
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 2px;
 }
 
 .actions-group {
@@ -239,17 +239,22 @@ body {
 
 .actions-collapse summary {
   list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.actions-collapse summary.ghost {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text);
   padding: 10px 16px;
   border-radius: var(--radius-sm);
   font-weight: 600;
-  font-size: 0.85rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+  min-height: 40px;
 }
 
 .actions-collapse summary:hover {

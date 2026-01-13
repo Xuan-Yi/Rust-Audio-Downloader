@@ -22,7 +22,10 @@ pub struct VersionInfo {
     pub release_url: Option<String>,
 }
 
-pub fn get_version_info(project_root: &Path) -> Result<VersionInfo> {
+pub fn get_version_info(
+    client: &reqwest::blocking::Client,
+    project_root: &Path,
+) -> Result<VersionInfo> {
     let backend_path = project_root.join("app").join("backend").join("Cargo.toml");
     let root_path = project_root.join("package.json");
     let frontend_path = project_root
@@ -48,29 +51,38 @@ pub fn get_version_info(project_root: &Path) -> Result<VersionInfo> {
         _ => false,
     };
 
-    let consistency = if all_match {
-        None
-    } else {
-        let backend_label = backend_version
-            .as_deref()
-            .map(|value| format!("v{value}"))
-            .unwrap_or_else(|| "missing".to_string());
-        let root_label = root_version
-            .as_deref()
-            .map(|value| format!("v{value}"))
-            .unwrap_or_else(|| "missing".to_string());
-        let frontend_label = frontend_version
-            .as_deref()
-            .map(|value| format!("v{value}"))
-            .unwrap_or_else(|| "missing".to_string());
-        Some(format!(
-            "Mismatch: backend {backend_label}, root {root_label}, frontend {frontend_label}"
-        ))
+    let (remote_backend, remote_root, remote_frontend, remote_present) =
+        read_remote_versions(client);
+    let remote_backend = remote_backend.as_deref().map(normalize_version);
+    let remote_root = remote_root.as_deref().map(normalize_version);
+    let remote_frontend = remote_frontend.as_deref().map(normalize_version);
+    let remote_all_match = match (&remote_backend, &remote_root, &remote_frontend) {
+        (Some(a), Some(b), Some(c)) => a == b && b == c,
+        _ => false,
     };
+
+    let latest = if remote_all_match {
+        remote_backend
+            .as_deref()
+            .map(|value| format!("v{value}"))
+            .or_else(|| Some("v0.0.0".to_string()))
+    } else {
+        Some("v0.0.0".to_string())
+    };
+
+    let consistency = build_consistency_message(
+        &backend_version,
+        &root_version,
+        &frontend_version,
+        &remote_backend,
+        &remote_root,
+        &remote_frontend,
+        remote_present,
+    );
 
     Ok(VersionInfo {
         current,
-        latest: Some("v0.0.0".to_string()),
+        latest,
         is_latest: Some(all_match),
         consistency,
         release_url: None,
@@ -79,6 +91,60 @@ pub fn get_version_info(project_root: &Path) -> Result<VersionInfo> {
 
 fn normalize_version(raw: &str) -> String {
     raw.trim().trim_start_matches('v').to_string()
+}
+
+fn build_consistency_message(
+    backend: &Option<String>,
+    root: &Option<String>,
+    frontend: &Option<String>,
+    remote_backend: &Option<String>,
+    remote_root: &Option<String>,
+    remote_frontend: &Option<String>,
+    remote_present: bool,
+) -> Option<String> {
+    let local_match = match (backend, root, frontend) {
+        (Some(a), Some(b), Some(c)) => a == b && b == c,
+        _ => false,
+    };
+    if !local_match {
+        return Some(format!(
+            "Local mismatch: backend {}, root {}, frontend {}",
+            version_label(backend),
+            version_label(root),
+            version_label(frontend)
+        ));
+    }
+
+    if !remote_present {
+        return None;
+    }
+
+    let remote_match = match (remote_backend, remote_root, remote_frontend) {
+        (Some(a), Some(b), Some(c)) => a == b && b == c,
+        _ => false,
+    };
+    if !remote_match {
+        return Some(format!(
+            "Remote mismatch: backend {}, root {}, frontend {}",
+            version_label(remote_backend),
+            version_label(remote_root),
+            version_label(remote_frontend)
+        ));
+    }
+
+    match (backend, remote_backend) {
+        (Some(local), Some(remote)) if local != remote => {
+            Some(format!("Local v{} differs from remote v{}", local, remote))
+        }
+        _ => None,
+    }
+}
+
+fn version_label(value: &Option<String>) -> String {
+    value
+        .as_deref()
+        .map(|version| format!("v{version}"))
+        .unwrap_or_else(|| "missing".to_string())
 }
 
 fn read_cargo_version(path: &Path) -> Result<Option<String>> {
@@ -116,6 +182,81 @@ fn read_package_version(path: &Path) -> Result<Option<String>> {
         .and_then(|value| value.as_str())
         .map(|value| value.to_string()))
 }
+
+fn read_remote_versions(
+    client: &reqwest::blocking::Client,
+) -> (Option<String>, Option<String>, Option<String>, bool) {
+    let refs = ["main", "master"];
+    for reference in refs {
+        let base = format!(
+            "https://raw.githubusercontent.com/Xuan-Yi/Rust-Audio-Downloader/{reference}"
+        );
+        let backend = fetch_remote_version(
+            client,
+            &format!("{base}/app/backend/Cargo.toml"),
+            true,
+        );
+        let root = fetch_remote_version(client, &format!("{base}/package.json"), false);
+        let frontend = fetch_remote_version(
+            client,
+            &format!("{base}/app/frontend/package.json"),
+            false,
+        );
+        if backend.is_some() || root.is_some() || frontend.is_some() {
+            let all_present = backend.is_some() && root.is_some() && frontend.is_some();
+            return (backend, root, frontend, all_present);
+        }
+    }
+    (None, None, None, false)
+}
+
+fn fetch_remote_version(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    is_cargo: bool,
+) -> Option<String> {
+    let response = client.get(url).send().ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let content = response.text().ok()?;
+    if is_cargo {
+        read_cargo_version_from_str(&content)
+    } else {
+        read_package_version_from_str(&content)
+    }
+}
+
+fn read_cargo_version_from_str(content: &str) -> Option<String> {
+    let mut in_package = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_package = trimmed == "[package]";
+            continue;
+        }
+        if in_package && trimmed.starts_with("version") {
+            let value = trimmed
+                .splitn(2, '=')
+                .nth(1)
+                .map(str::trim)
+                .and_then(|value| value.strip_prefix('"').and_then(|v| v.strip_suffix('"')))
+                .map(|value| value.to_string());
+            if value.is_some() {
+                return value;
+            }
+        }
+    }
+    None
+}
+
+fn read_package_version_from_str(content: &str) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_str(content).ok()?;
+    json.get("version")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+}
+
 
 pub fn import_music_list(path: &Path) -> Result<Vec<MusicRow>> {
     match path.extension().and_then(|ext| ext.to_str()).unwrap_or("") {

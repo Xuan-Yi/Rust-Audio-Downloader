@@ -27,7 +27,8 @@ use crate::types::{
 pub async fn version_info(State(state): State<AppState>) -> Result<Json<VersionResponse>, AppError> {
     let project_root = state.project_root.clone();
     let info = tokio::task::spawn_blocking(move || {
-        get_version_info(&project_root)
+        let client = reqwest::blocking::Client::new();
+        get_version_info(&client, &project_root)
     })
     .await
     .map_err(|err| AppError::internal(err.to_string()))?
