@@ -1,0 +1,11 @@
+{
+  "name": "audio-downloader-root",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "concurrently \"cargo run --manifest-path app/backend/Cargo.toml\" \"pnpm --dir app/frontend dev\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}
